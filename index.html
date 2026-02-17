@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio-Reactive Mandala</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400&family=Noto+Sans+SC:wght@200;300;400&display=swap" rel="stylesheet">
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/addons/p5.sound.min.js"></script>
+
+  <style>
+    /* 全局重置 */
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #000; }
+
+    /* 画布容器 */
+    #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; }
+
+    /* UI 遮罩层 - 完美复刻 React 版的渐变逻辑 */
+    #intro-overlay {
+      position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 50;
+      display: flex; flex-direction: column; justify-content: center; align-items: center;
+      pointer-events: none; /* 初始不挡鼠标 */
+      transition: opacity 2s ease-in-out;
+    }
+
+    /* 按钮样式 - 1:1 还原玻璃拟态 (Tailwind 翻译版) */
+    #start-btn {
+      pointer-events: auto;
+      opacity: 0; /* 初始隐藏，等待 JS 激活 */
+
+      /* 布局 */
+      padding: 12px 32px;
+      border-radius: 9999px; /* 圆角全满 */
+      display: flex; flex-direction: column; align-items: center; gap: 6px;
+
+      /* 玻璃特效核心 */
+      background-color: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px); /* 兼容 Safari */
+      box-shadow: inset 0 0.5px 0.5px rgba(255,255,255,0.2);
+
+      /* 字体与颜色 */
+      color: white;
+      cursor: pointer;
+      transition: all 0.5s ease-out;
+      transform: scale(0.95);
+    }
+
+    /* 按钮激活状态 */
+    #start-btn.visible { opacity: 1; transform: scale(1); }
+
+    /* 按钮悬停效果 */
+    #start-btn:hover {
+      background-color: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.40);
+      transform: scale(1.05);
+    }
+
+    /* 文字排版还原 */
+    .btn-text-zh {
+      font-family: "Noto Sans SC", sans-serif;
+      font-size: 14px;
+      font-weight: 300;
+      letter-spacing: 0.2em;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+
+    .btn-text-en {
+      font-family: "Inter", sans-serif;
+      font-size: 9px;
+      font-weight: 300;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      opacity: 0.8;
+    }
+
+    /* 隐藏工具类 */
+    .hidden { opacity: 0 !important; pointer-events: none !important; }
+
+    /* 右上角状态灯 */
+    #status-bar {
+      position: absolute; top: 30px; right: 30px;
+      color: rgba(255,255,255,0.6);
+      font-family: "Inter", sans-serif; font-size: 11px; font-weight: 300; letter-spacing: 1px;
+      z-index: 60; display: flex; align-items: center; gap: 8px;
+      opacity: 0; transition: opacity 1s;
+    }
+    .dot { width: 6px; height: 6px; background: #4ade80; border-radius: 50%; box-shadow: 0 0 8px #4ade80; }
+
+    /* 请播放音乐提示 - 居中，音量=0 时显示 */
+    .play-music-prompt {
+      position: fixed; inset: 0; width: 100%; height: 100%;
+      z-index: 55;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      pointer-events: none;
+    }
+    .play-music-prompt:not(.hidden) { pointer-events: none; }
+    .play-music-prompt .prompt-text { text-align: center; }
+    .play-music-prompt .prompt-zh {
+      font-family: "Noto Sans SC", sans-serif;
+      font-size: 18px; font-weight: 300; letter-spacing: 0.3em;
+      color: white; margin: 0 0 8px 0;
+    }
+    .play-music-prompt .prompt-en {
+      font-family: "Inter", sans-serif;
+      font-size: 12px; font-weight: 300; letter-spacing: 0.2em;
+      color: rgba(255,255,255,0.9); margin: 0; text-transform: uppercase;
+    }
+
+    /* 授权错误提示 - 轻盈、简单、干净 */
+    .audio-error { position: fixed; inset: 0; z-index: 70; }
+    .audio-error.hidden { display: none !important; }
+    .audio-error .error-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+    }
+    .audio-error .error-card {
+      max-width: 420px; margin: 0 20px;
+      background: rgba(255,255,255,0.06); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(255,255,255,0.12); border-radius: 24px;
+      padding: 40px 36px;
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.06) inset, 0 4px 24px rgba(0,0,0,0.12);
+    }
+    .audio-error .error-title-zh {
+      font-family: "Noto Sans SC", sans-serif;
+      color: white; font-size: 20px; font-weight: 300; letter-spacing: 0.2em;
+      text-align: center; margin: 0 0 4px 0; text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .audio-error .error-title-en {
+      font-family: "Inter", sans-serif;
+      color: rgba(255,255,255,0.8); font-size: 11px; font-weight: 300; letter-spacing: 0.15em;
+      text-transform: uppercase; text-align: center; margin: 0 0 24px 0;
+    }
+    .audio-error .error-steps {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px;
+      background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 16px; padding: 20px; margin-bottom: 28px;
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    }
+    .audio-error .error-step {
+      display: flex; align-items: center; gap: 10px;  /* 数字在中英文平衡线 */
+    }
+    .audio-error .step-num {
+      flex-shrink: 0;
+      width: 22px; height: 22px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 50%;
+      font-family: "Inter", sans-serif; font-size: 11px; font-weight: 500;
+      color: rgba(255,255,255,0.9);
+    }
+    .audio-error .step-num.step-highlight {
+      color: #ffd899;
+      border-color: rgba(255,216,153,0.6);
+    }
+    .audio-error .error-step-content { flex: 1; }
+    .audio-error .error-step-content .step-zh {
+      font-family: "Noto Sans SC", sans-serif;
+      color: rgba(255,255,255,0.85); font-size: 13px; margin: 0; line-height: 1.5; letter-spacing: 0.05em;
+    }
+    .audio-error .error-step-content .step-en {
+      font-family: "Inter", sans-serif;
+      color: rgba(255,255,255,0.55); font-size: 10px; margin: 2px 0 0 0; line-height: 1.4; letter-spacing: 0.05em;
+    }
+    .audio-error .error-step .step-num.step-highlight + .error-step-content .step-zh,
+    .audio-error .error-step .step-num.step-highlight + .error-step-content .step-en { color: #ffd899; font-weight: 400; }
+    /* 重新授权按钮 - 轻盈药丸形 */
+    .audio-error .error-retry-btn {
+      width: 100%; padding: 14px 28px;
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.14);
+      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset;
+      color: white; border-radius: 9999px; cursor: pointer;
+      transition: all 0.25s ease; font-family: "Noto Sans SC", sans-serif;
+    }
+    .audio-error .error-retry-btn:hover {
+      background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.25);
+      transform: scale(1.01);
+    }
+    .audio-error .error-retry-btn .btn-text-zh {
+      font-family: "Noto Sans SC", sans-serif; font-size: 14px; font-weight: 300; letter-spacing: 0.2em;
+    }
+    .audio-error .error-retry-btn .btn-text-en {
+      font-family: "Inter", sans-serif; font-size: 9px; font-weight: 300; letter-spacing: 0.15em;
+      text-transform: uppercase; opacity: 0.85;
+    }
+
+    /* 沉浸式模式按钮 - 曼陀罗右下角，与 intro 同款玻璃拟态椭圆 */
+    #immerse-btn {
+      position: fixed; bottom: 30px; right: 30px; z-index: 60;
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      padding: 12px 28px;
+      border-radius: 9999px;
+      background-color: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      box-shadow: inset 0 0.5px 0.5px rgba(255,255,255,0.2);
+      color: white; cursor: pointer;
+      font-family: "Inter", sans-serif; font-size: 12px; font-weight: 300;
+      letter-spacing: 0.15em; text-transform: uppercase;
+      transition: all 0.3s ease; opacity: 0;
+      pointer-events: none;
+    }
+    #immerse-btn.visible {
+      opacity: 1; pointer-events: auto;
+    }
+    #immerse-btn:hover {
+      background-color: rgba(255, 255, 255, 0.18);
+      border-color: rgba(255, 255, 255, 0.40);
+      transform: scale(1.05);
+    }
+    #immerse-btn .icon {
+      width: 14px; height: 14px; flex-shrink: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+
+  <div id="intro-overlay">
+    <button id="start-btn" onclick="startExperience()">
+      <span class="btn-text-zh">开启曼陀罗音频沉浸空间</span>
+      <span class="btn-text-en">Start Mandala Audio Immersion Space</span>
+    </button>
+  </div>
+
+  <div id="status-bar">
+    <div class="dot"></div> AUDIO ACTIVE
+  </div>
+
+  <!-- 授权错误提示 -->
+  <div id="audio-error" class="audio-error hidden"></div>
+
+  <!-- 音量=0 时显示：请播放音乐（居中，无按钮） -->
+  <div id="play-music-prompt" class="play-music-prompt hidden">
+    <div class="prompt-text">
+      <p class="prompt-zh">请播放音乐</p>
+      <p class="prompt-en">Please Play Music</p>
+    </div>
+  </div>
+
+  <!-- 沉浸式模式按钮 - 曼陀罗右下角，进入曼陀罗后显示 -->
+  <button id="immerse-btn" type="button" class="hidden" title="IMMERSIVE MODE">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+    </svg>
+    <span>IMMERSIVE MODE</span>
+  </button>
+
+  <script src="sketch.js"></script>
+</body>
+</html>
